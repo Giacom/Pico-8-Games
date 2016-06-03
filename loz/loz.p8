@@ -115,32 +115,58 @@ end
 spawn_uvs = {15}
 
 enemy = {}
-enemy.health = 3
-enemy.spawn = 0, 0
-enemy.sprite = nil
 
 function enemy:new(x, y, uv)
  local enemy = {}
-	setmetatable(rects, self)
+	setmetatable(enemy, self)
 	self.__index = self
 	enemy.sprite = sprite:new(x, y, 7, 7, uv)
 	enemy.spawn_x, enemy.spawn_y = pixel_to_tile(x, y)
+	enemy.health = 3
+ enemy.spawn = 0, 0
+ enemy.face_dir = south
 	return enemy
 end
 
 function enemies_update()
- if ticks % 50 == 0 then
-  for enemy in all(area.enemies) do
-   if rnd(0) <= 0.25 then
-    enemies_rotate(enemy.sprite, pick(dirs))
+ if ticks > 0 then
+  for area_enemy in all(area.enemies) do
+   local random_result = rnd(1)
+   if random_result <= 0.1 then
+    area_enemy:rotate()
+   elseif random_result <= 0.5 then
+    area_enemy:move()
    end
   end
  end
 end
 
-function enemies_rotate(sprite, direction)
+function enemy:rotate()
+ local direction = pick(dirs)
  local dir_map = { [north] = -2, [south] = 0, [east] = -1, [west] = -3}
- sprite.uv = sprite.initial_uv + dir_map[direction]
+ self.sprite.uv = self.sprite.initial_uv + dir_map[direction]
+ self.face_dir = direction
+end
+
+function enemy:move()
+ local new_rect = self.sprite.rect:copy()
+ 
+ if self.face_dir == north then
+  new_rect.y -= 1
+ end
+ if self.face_dir == south then
+  new_rect.y += 1
+ end 
+ if self.face_dir == east then
+  new_rect.x += 1
+ end 
+ if self.face_dir == west then
+  new_rect.x -= 1
+ end
+  
+ if not is_colliding(new_rect) then
+  self.sprite.rect = new_rect
+ end
 end
 
 -- game
@@ -170,33 +196,141 @@ south_west = bor(south, west)
 dirs = {north, south, east, west} --, north_east, north_west, south_east, south_west}
 
 -- player
-player = sprite:new(24 * tile_size, 6 * tile_size, 7, 7, 65)
-mov_speed = 1
-mov_dir = 0
-face_dir = south
-changing_screen = false
-max_health = 6
-health = 6
-stunned = 0
-invincibility = 0
+player = {}
+player.sprite = sprite:new(24 * tile_size, 6 * tile_size, 7, 7, 65)
+player.mov_speed = 1
+player.mov_dir = 0
+player.face_dir = south
+player.changing_screen = false
+player.max_health = 6
+player.health = 6
+player.stunned = 0
+player.invincibility = 0
+player.stun_speed = 5
 
 -- animation stuff
-animation_rate = 5
-animation_walk_frames = 3
-animation_walk_start = 65
+player.animation_rate = 5
+player.animation_walk_frames = 3
+player.animation_walk_start = 65
 
-north_walk = 81
-south_walk = 65
-west_walk = 97
-east_walk = 113
+player.north_walk = 81
+player.south_walk = 65
+player.west_walk = 97
+player.east_walk = 113
 
-function _init()
- music(0, 1, 1)
- color(8)
- srand(time())
+function player:update()
+
+ -- player collision and movement
  
- area:load_area(pixel_to_tile(tile_to_map(player.rect.x, player.rect.y)))
+ local new_rect = self.sprite.rect:copy()
+ local moved = false
+ local prev_face_dir = self.face_dir
+
+ if self.mov_dir == 0 then
+  if btn(0) then
+   self.mov_dir = west self.face_dir = west
+   self.animation_walk_start = self.west_walk
+  elseif btn(1) then
+   self.mov_dir = east self.face_dir = east
+   self.animation_walk_start = self.east_walk
+  elseif btn(2) then
+   self.mov_dir = north self.face_dir = north
+   self.animation_walk_start = self.north_walk
+  elseif btn(3) then
+   self.mov_dir = south self.face_dir = south
+   self.animation_walk_start = self.south_walk
+  end
+ end
  
+ if band(self.mov_dir, west) != 0 then
+  new_rect.x -= self.mov_speed
+ end
+ 
+ if band(self.mov_dir, east) != 0 then
+  new_rect.x += self.mov_speed
+ end
+ 
+ if band(self.mov_dir, north) != 0 then
+  new_rect.y -= self.mov_speed
+ end
+
+ if band(self.mov_dir, south) != 0 then
+  new_rect.y += self.mov_speed
+ end
+ 
+ if self.stunned > 0 then
+  local stun_speed = 5
+  if self.face_dir == north then
+   new_rect.y += self.stun_speed
+  end
+  
+  if self.face_dir == south then
+   new_rect.y -= self.stun_speed
+  end
+  
+  if self.face_dir == west then
+   new_rect.x += self.stun_speed
+  end
+  
+  if self.face_dir == east then
+   new_rect.x -= self.stun_speed
+  end
+  self.stunned -= self.stun_speed
+ end
+
+ moved = (new_rect.x != self.sprite.rect.x or new_rect.y != self.sprite.rect.y)  
+
+ if not is_colliding(new_rect) then
+  self.sprite.rect.x = new_rect.x
+	 self.sprite.rect.y = new_rect.y
+ end
+ 
+ if self.invincibility <= 0 then
+  if is_enemy_colliding(new_rect) then
+   self:take_damage()
+  end
+ else
+   self.invincibility -= 1
+ end
+ 
+ if self.mov_dir != 0 then
+ 	local map_x, map_y = tile_to_map(pixel_to_tile(new_rect.x, new_rect.y))
+  self.changing_screen = map_x != area.x or map_y != area.y
+  area:load_area(map_x, map_y)
+  if self.changing_screen then
+   self.sprite.rect.x, self.sprite.rect.y = new_rect.x, new_rect.y
+   self.mov_dir = 0
+  end
+ end
+ 
+ self.mov_dir = 0
+ 
+ if prev_face_dir != self.face_dir then
+  self.sprite.uv = self.animation_walk_start
+ end
+ 
+ -- player animation
+
+	if moved and ticks % self.animation_rate == 0 then
+	 self.sprite.uv += 1
+	 if self.sprite.uv > self.animation_walk_start + self.animation_walk_frames then
+	  self.sprite.uv = self.animation_walk_start
+	 end
+	end
+end
+
+function player:draw()
+ if not self.changing_screen then
+  if self.invincibility % 4 == 0 then
+   player.sprite:draw()
+  end
+ end
+end
+
+function player:take_damage()
+ self.stunned = 20
+ self.invincibility = 35
+ self.health -= 1
 end
 
 function pick(collection)
@@ -259,136 +393,39 @@ function is_colliding(rects)
  return false
 end
 
+function _init()
+ music(0, 1, 1)
+ color(8)
+ srand(time())
+ 
+ area:load_area(pixel_to_tile(tile_to_map(player.sprite.rect.x, player.sprite.rect.y)))
+ 
+end
+
 function _update()
  ticks += 1
- 
- -- player collision and movement
- 
- local new_rect = player.rect:copy()
- local moved = false
- local prev_face_dir = face_dir
  
  if btnp(2) and btnp(3) then
   debug = not debug
  end
  
- if mov_dir == 0 then
-  if btn(0) then
-   mov_dir = west face_dir = west
-   animation_walk_start = west_walk
-  elseif btn(1) then
-   mov_dir = east face_dir = east
-   animation_walk_start = east_walk
-  elseif btn(2) then
-   mov_dir = north face_dir = north
-   animation_walk_start = north_walk
-  elseif btn(3) then
-   mov_dir = south face_dir = south
-   animation_walk_start = south_walk
-  end
- end
- 
- if band(mov_dir, west) != 0 then
-  new_rect.x -= mov_speed
- end
- 
- if band(mov_dir, east) != 0 then
-  new_rect.x += mov_speed
- end
- 
- if band(mov_dir, north) != 0 then
-  new_rect.y -= mov_speed
- end
-
- if band(mov_dir, south) != 0 then
-  new_rect.y += mov_speed
- end
- 
- if stunned > 0 then
-  local stun_speed = 5
-  if face_dir == north then
-   new_rect.y += stun_speed
-  end
-  
-  if face_dir == south then
-   new_rect.y -= stun_speed
-  end
-  
-  if face_dir == west then
-   new_rect.x += stun_speed
-  end
-  
-  if face_dir == east then
-   new_rect.x -= stun_speed
-  end
-  stunned -= stun_speed
- end
-
- moved = (new_rect.x != player.rect.x or new_rect.y != player.rect.y)  
-
- if not is_colliding(new_rect) then
-  player.rect.x = new_rect.x
-	 player.rect.y = new_rect.y
- end
- 
- if invincibility <= 0 then
-  if is_enemy_colliding(new_rect) then
-   stunned = 20
-   invincibility = 35
-   health -= 1
-  end
- else
-   invincibility -= 1
- end
- 
- if mov_dir != 0 then
- 	local map_x, map_y = tile_to_map(pixel_to_tile(new_rect.x, new_rect.y))
-  changing_screen = map_x != area.x or map_y != area.y
-  area:load_area(map_x, map_y)
-  if changing_screen then
-   player.rect.x, player.rect.y = new_rect.x, new_rect.y
-   mov_dir = 0
-  end
- end
- 
- mov_dir = 0
- 
- if prev_face_dir != face_dir then
-  player.uv = animation_walk_start
- end
- 
- -- player animation
-
-	if ticks % animation_rate == 0 then
-	 player.uv += 1
-	 if not moved then
-	  player.uv = animation_walk_start
-	 end
-	 if player.uv > animation_walk_start + animation_walk_frames then
-	  player.uv = animation_walk_start
-	 end
-	end
-	
-	-- enemy ai
+ player:update()
  enemies_update()
 end
 
 function _draw()
  cls()
  map(area.x * area_width, area.y * area_height, 0, 0, area_width, area_height)
+
+ player:draw()
  
- if not changing_screen then
-  if invincibility % 4 == 0 then
-   player:draw()
-  end
-  for enemy in all(area.enemies) do
-   enemy.sprite:draw()
-  end
+ for enemy in all(area.enemies) do
+  enemy.sprite:draw()
  end
  
  -- ui
  
- for heart_index = 0, max_health do
+ for heart_index = 0, player.max_health do
   local x = 0
   local heart_sprite = 35
   if heart_index % 2 == 0 then 
@@ -398,7 +435,7 @@ function _draw()
    x = (heart_index - 1) * (tile_size * 0.5) + 8
   end
   
-  if heart_index > health then
+  if heart_index > player.health then
    heart_sprite += 2
   end
   
@@ -415,16 +452,16 @@ function _draw()
  color(8)
  print("cpu: "..((flr(stat(1) * 100)) / 100).." - mem:"..flr(stat(0)).."/1024mb")
  
- local map_x, map_y = pixel_to_tile(player.rect.x, player.rect.y)
- print("x: "..player.rect.x.."("..map_x..","..area.x.."), y: "..player.rect.y.."("..map_y..","..area.y..")")
+ local map_x, map_y = pixel_to_tile(player.sprite.rect.x, player.sprite.rect.y)
+ print("x: "..player.sprite.rect.x.."("..map_x..","..area.x.."), y: "..player.player.sprite.rect.y.."("..map_y..","..area.y..")")
 	
 	print("dir: "..mov_dir..", face_dir: "..face_dir..", stun: "..stunned)
 	print("invi:"..invincibility..", enemies: "..#area.enemies)
  print(min_x..", "..max_x.." - "..min_y..", "..max_y)
 
- player.rect:draw(3)
+ player.sprite.rect:draw(3)
  for enemy in all(area.enemies) do
-  local intersects = player.rect:intersects(enemy.sprite.rect)
+  local intersects = player.sprite.rect:intersects(enemy.sprite.rect)
   enemy.sprite.rect:draw(intersects and 8 or 3)
  end
 end
